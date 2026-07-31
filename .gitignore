@@ -1,0 +1,35 @@
+# CMake and Visual Studio
+build/
+build-*/
+out/
+.vs/
+CMakeFiles/
+CMakeCache.txt
+cmake_install.cmake
+*.sln
+*.vcxproj
+*.vcxproj.filters
+*.vcxproj.user
+
+# Compiled files
+*.exe
+*.dll
+*.lib
+*.obj
+*.pdb
+*.ilk
+*.exp
+
+# Release output
+release/
+artifacts/
+GitHub-Artifacts/
+NTPWEdit-EXE/
+
+# PowerShell and temporary files
+*.log
+*.tmp
+*.bak
+*.user
+.DS_Store
+Thumbs.db

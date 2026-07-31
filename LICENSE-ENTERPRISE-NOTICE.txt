@@ -1,0 +1,21 @@
+NTPWEdit Enterprise overlay license notice
+==========================================
+
+This package is an automation/source overlay for the NTPWEdit-Mirror project.
+The upstream NTPWEdit application declares GNU GPL version 2 licensing in its
+source and repository. Portions of the underlying registry/SAM library carry
+LGPL notices in the upstream source files.
+
+When distributing compiled or modified binaries, preserve the upstream license
+files, copyright notices, and corresponding-source obligations. GitHub Actions
+artifacts produced by this package copy the upstream README/license files when
+present.
+
+This notice does not replace the upstream license text.
+
+Attribution location
+--------------------
+The Enterprise About dialog intentionally omits obsolete personal contact
+details and legacy web links. Original copyright and third-party attribution
+remain in the inherited source-file headers and upstream license files, as
+required when distributing modified GPL/LGPL software.

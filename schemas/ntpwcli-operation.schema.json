@@ -1,0 +1,68 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "NTPWEdit Enterprise operation result",
+  "type": "object",
+  "required": [
+    "schemaVersion",
+    "tool",
+    "version",
+    "success",
+    "operation",
+    "samPath"
+  ],
+  "properties": {
+    "schemaVersion": {
+      "const": 1
+    },
+    "tool": {
+      "const": "ntpwcli"
+    },
+    "version": {
+      "type": "string",
+      "minLength": 1
+    },
+    "success": {
+      "const": true
+    },
+    "operation": {
+      "type": "string",
+      "minLength": 1
+    },
+    "samPath": {
+      "type": "string",
+      "minLength": 1
+    },
+    "path": {
+      "type": "string",
+      "minLength": 1
+    },
+    "user": {
+      "$ref": "ntpwcli-users.schema.json#/$defs/user"
+    }
+  },
+  "oneOf": [
+    {
+      "title": "Account mutation result",
+      "required": [
+        "user"
+      ],
+      "not": {
+        "required": [
+          "path"
+        ]
+      }
+    },
+    {
+      "title": "Hive backup or restore result",
+      "required": [
+        "path"
+      ],
+      "not": {
+        "required": [
+          "user"
+        ]
+      }
+    }
+  ],
+  "additionalProperties": false
+}

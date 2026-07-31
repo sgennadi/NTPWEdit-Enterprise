@@ -1,0 +1,134 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    name: Validate source and scripts
+    runs-on: windows-2022
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Validate PowerShell syntax
+        shell: pwsh
+        run: |
+          $files = Get-ChildItem -Recurse -File -Filter *.ps1 | Where-Object {
+            $_.FullName -notmatch '[\\/]\.git[\\/]'
+          }
+          foreach ($file in $files) {
+            $tokens = $null
+            $errors = $null
+            [void][Management.Automation.Language.Parser]::ParseFile(
+              $file.FullName,
+              [ref]$tokens,
+              [ref]$errors
+            )
+            if ($errors.Count) {
+              $errors | Format-List
+              throw "PowerShell syntax error: $($file.FullName)"
+            }
+          }
+
+      - name: Validate required source files
+        shell: pwsh
+        run: |
+          foreach ($path in @(
+            'src/CMakeLists.txt',
+            'src/main.c',
+            'src/ntpwcli.c',
+            'src/cli.c',
+            'src/cli.h',
+            'src/guiargs.c',
+            'src/guiargs.h',
+            'src/libntpw/ntpw.c',
+            'src/libntpw/ntpw.h'
+          )) {
+            if (-not (Test-Path -LiteralPath $path -PathType Leaf)) {
+              throw "Required source file is missing: $path"
+            }
+          }
+
+  build:
+    name: Build ${{ matrix.name }}
+    needs: validate
+    runs-on: windows-2022
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: amd64
+            cmake_arch: x64
+            gui: ntpwedit64.exe
+            machine: '0x8664'
+            smoke: true
+          - name: x86
+            cmake_arch: Win32
+            gui: ntpwedit.exe
+            machine: '0x014C'
+            smoke: true
+          - name: arm64
+            cmake_arch: ARM64
+            gui: ntpweditarm64.exe
+            machine: '0xAA64'
+            smoke: false
+
+    steps:
+      - uses: actions/checkout@v4
+      - uses: microsoft/setup-msbuild@v2
+
+      - name: Configure
+        shell: pwsh
+        run: |
+          cmake -S src -B "build-${{ matrix.name }}" `
+            -A "${{ matrix.cmake_arch }}" `
+            -DNTPWEDIT_BUILD_GUI=ON `
+            -DNTPWEDIT_BUILD_CLI=ON `
+            -DNTPWEDIT_ENABLE_TESTS=ON
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      - name: Build
+        shell: pwsh
+        run: |
+          cmake --build "build-${{ matrix.name }}" --config Release --parallel
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      - name: Validate executables
+        shell: pwsh
+        run: |
+          function Get-PeMachine([string]$Path) {
+            $stream = [IO.File]::OpenRead($Path)
+            try {
+              $reader = [IO.BinaryReader]::new($stream)
+              $stream.Position = 0x3c
+              $peOffset = $reader.ReadInt32()
+              $stream.Position = $peOffset
+              if ($reader.ReadUInt32() -ne 0x00004550) { throw "Invalid PE signature: $Path" }
+              return ('0x{0:X4}' -f $reader.ReadUInt16())
+            }
+            finally { $stream.Dispose() }
+          }
+
+          $gui = Get-ChildItem "build-${{ matrix.name }}" -Recurse -File -Filter "${{ matrix.gui }}" | Select-Object -First 1
+          $cli = Get-ChildItem "build-${{ matrix.name }}" -Recurse -File -Filter ntpwcli.exe | Select-Object -First 1
+          if (-not $gui) { throw 'GUI executable was not produced.' }
+          if (-not $cli) { throw 'ntpwcli.exe was not produced.' }
+          foreach ($file in @($gui,$cli)) {
+            $actual = Get-PeMachine $file.FullName
+            if ($actual -ne '${{ matrix.machine }}') {
+              throw "$($file.Name) has PE machine $actual, expected ${{ matrix.machine }}"
+            }
+          }
+
+          if ('${{ matrix.smoke }}' -eq 'true') {
+            & $cli.FullName /version
+            if ($LASTEXITCODE -ne 0) { throw 'ntpwcli /version failed.' }
+            & $cli.FullName /?
+            if ($LASTEXITCODE -ne 0) { throw 'ntpwcli /? failed.' }
+          }
