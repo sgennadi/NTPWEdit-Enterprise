@@ -1,0 +1,184 @@
+name: Build and publish Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Release version without the v prefix, for example 1.0.0'
+        required: true
+        type: string
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    name: Build ${{ matrix.name }}
+    runs-on: windows-2022
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: amd64
+            cmake_arch: x64
+            gui: ntpwedit64.exe
+            machine: '0x8664'
+            smoke: true
+          - name: x86
+            cmake_arch: Win32
+            gui: ntpwedit.exe
+            machine: '0x014C'
+            smoke: true
+          - name: arm64
+            cmake_arch: ARM64
+            gui: ntpweditarm64.exe
+            machine: '0xAA64'
+            smoke: false
+
+    steps:
+      - uses: actions/checkout@v7
+      - uses: microsoft/setup-msbuild@v3
+
+      - name: Configure
+        shell: pwsh
+        run: |
+          cmake -S src -B "build-${{ matrix.name }}" `
+            -A "${{ matrix.cmake_arch }}" `
+            -DNTPWEDIT_BUILD_GUI=ON `
+            -DNTPWEDIT_BUILD_CLI=ON `
+            -DNTPWEDIT_ENABLE_TESTS=ON
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      - name: Build
+        shell: pwsh
+        run: |
+          cmake --build "build-${{ matrix.name }}" --config Release --parallel
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      - name: Package architecture
+        shell: pwsh
+        run: |
+          function Get-PeMachine([string]$Path) {
+            $stream = [IO.File]::OpenRead($Path)
+            try {
+              $reader = [IO.BinaryReader]::new($stream)
+              $stream.Position = 0x3c
+              $peOffset = $reader.ReadInt32()
+              $stream.Position = $peOffset
+              if ($reader.ReadUInt32() -ne 0x00004550) { throw "Invalid PE signature: $Path" }
+              return ('0x{0:X4}' -f $reader.ReadUInt16())
+            }
+            finally { $stream.Dispose() }
+          }
+
+          $gui = Get-ChildItem "build-${{ matrix.name }}" -Recurse -File -Filter "${{ matrix.gui }}" | Select-Object -First 1
+          $cli = Get-ChildItem "build-${{ matrix.name }}" -Recurse -File -Filter ntpwcli.exe | Select-Object -First 1
+          if (-not $gui -or -not $cli) { throw 'Expected executables were not produced.' }
+          foreach ($file in @($gui,$cli)) {
+            $actual = Get-PeMachine $file.FullName
+            if ($actual -ne '${{ matrix.machine }}') {
+              throw "$($file.Name) has PE machine $actual, expected ${{ matrix.machine }}"
+            }
+          }
+
+          if ('${{ matrix.smoke }}' -eq 'true') {
+            & $cli.FullName /version
+            if ($LASTEXITCODE -ne 0) { throw 'ntpwcli /version failed.' }
+          }
+
+          $package = Join-Path $PWD 'package'
+          New-Item -ItemType Directory -Path $package -Force | Out-Null
+          Copy-Item $gui.FullName (Join-Path $package '${{ matrix.gui }}') -Force
+          Copy-Item $cli.FullName (Join-Path $package 'ntpwcli.exe') -Force
+          Copy-Item README.md $package -Force
+          Copy-Item README_RU.md $package -Force
+          Copy-Item LICENSE $package -Force -ErrorAction SilentlyContinue
+          Copy-Item NOTICE.md $package -Force
+
+          Get-ChildItem $package -File -Filter *.exe | Sort-Object Name | ForEach-Object {
+            $hash = Get-FileHash $_.FullName -Algorithm SHA256
+            '{0}  {1}' -f $hash.Hash.ToLowerInvariant(),$_.Name
+          } | Set-Content (Join-Path $package 'SHA256SUMS.txt') -Encoding ascii
+
+          Compress-Archive -Path "$package\*" -DestinationPath "NTPWEdit-Enterprise-${{ matrix.name }}.zip" -CompressionLevel Optimal
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: release-${{ matrix.name }}
+          path: NTPWEdit-Enterprise-${{ matrix.name }}.zip
+          if-no-files-found: error
+
+  release:
+    name: Publish GitHub Release
+    needs: build
+    runs-on: windows-2022
+    env:
+      GH_TOKEN: ${{ github.token }}
+
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/download-artifact@v8
+        with:
+          pattern: release-*
+          path: artifacts
+          merge-multiple: true
+
+      - name: Prepare release files
+        id: release_info
+        shell: pwsh
+        run: |
+          $version = if ('${{ github.event_name }}' -eq 'workflow_dispatch') {
+            '${{ inputs.version }}'
+          } else {
+            '${{ github.ref_name }}'.TrimStart('v')
+          }
+          if ([string]::IsNullOrWhiteSpace($version)) { throw 'Version is empty.' }
+          $tag = "v$version"
+          "version=$version" >> $env:GITHUB_OUTPUT
+          "tag=$tag" >> $env:GITHUB_OUTPUT
+
+          $all = Join-Path $PWD 'all'
+          New-Item -ItemType Directory -Path $all -Force | Out-Null
+          Copy-Item artifacts\NTPWEdit-Enterprise-amd64.zip $all -Force
+          Copy-Item artifacts\NTPWEdit-Enterprise-x86.zip $all -Force
+          Copy-Item artifacts\NTPWEdit-Enterprise-arm64.zip $all -Force
+          Compress-Archive -Path "$all\*" -DestinationPath artifacts\NTPWEdit-Enterprise-All.zip -CompressionLevel Optimal
+
+          Get-ChildItem artifacts -File -Filter *.zip | Sort-Object Name | ForEach-Object {
+            $hash = Get-FileHash $_.FullName -Algorithm SHA256
+            '{0}  {1}' -f $hash.Hash.ToLowerInvariant(),$_.Name
+          } | Set-Content artifacts\SHA256SUMS.txt -Encoding ascii
+
+          @"
+          # NTPWEdit Enterprise $tag
+
+          ## Downloads
+
+          - NTPWEdit-Enterprise-amd64.zip - 64-bit Intel/AMD
+          - NTPWEdit-Enterprise-x86.zip - 32-bit Windows
+          - NTPWEdit-Enterprise-arm64.zip - ARM64 Windows
+          - NTPWEdit-Enterprise-All.zip - all architecture packages
+          - SHA256SUMS.txt - SHA-256 checksums
+
+          Each package contains the graphical application and the separate ntpwcli.exe console application.
+          "@ | Set-Content RELEASE-NOTES.md -Encoding utf8
+
+      - name: Create or update Release
+        shell: pwsh
+        run: |
+          $tag = '${{ steps.release_info.outputs.tag }}'
+          $assets = @(Get-ChildItem artifacts -File | Where-Object { $_.Extension -eq '.zip' -or $_.Name -eq 'SHA256SUMS.txt' } | Select-Object -ExpandProperty FullName)
+          if (-not $assets.Count) { throw 'No release assets were produced.' }
+
+          gh release view $tag --repo '${{ github.repository }}' *> $null
+          if ($LASTEXITCODE -eq 0) {
+            & gh release upload $tag @assets --repo '${{ github.repository }}' --clobber
+            if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+            gh release edit $tag --repo '${{ github.repository }}' --title "NTPWEdit Enterprise $tag" --notes-file RELEASE-NOTES.md --latest
+          } else {
+            & gh release create $tag @assets --repo '${{ github.repository }}' --target '${{ github.sha }}' --title "NTPWEdit Enterprise $tag" --notes-file RELEASE-NOTES.md --latest
+          }
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }

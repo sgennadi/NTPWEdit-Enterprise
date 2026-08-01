@@ -1,0 +1,121 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "NTPWEdit Enterprise local user inventory",
+  "type": "object",
+  "required": [
+    "schemaVersion",
+    "tool",
+    "version",
+    "samPath",
+    "readOnly",
+    "users"
+  ],
+  "properties": {
+    "schemaVersion": {
+      "const": 1
+    },
+    "tool": {
+      "const": "ntpwcli"
+    },
+    "version": {
+      "type": "string"
+    },
+    "samPath": {
+      "type": "string"
+    },
+    "readOnly": {
+      "type": "boolean"
+    },
+    "users": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/user"
+      }
+    },
+    "selectedUser": {
+      "$ref": "#/$defs/user"
+    }
+  },
+  "$defs": {
+    "user": {
+      "type": "object",
+      "required": [
+        "name",
+        "rid",
+        "ridHex",
+        "state",
+        "disabled",
+        "locked",
+        "autoLocked",
+        "lockedByFailedCount",
+        "failedCount",
+        "loginCount",
+        "lockoutThreshold",
+        "passwordNeverExpires",
+        "passwordNotRequired",
+        "normalAccount",
+        "acbBits"
+      ],
+      "properties": {
+        "name": {
+          "type": "string"
+        },
+        "rid": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "ridHex": {
+          "type": "string",
+          "pattern": "^0x[0-9A-Fa-f]{8}$"
+        },
+        "state": {
+          "enum": [
+            "enabled",
+            "disabled",
+            "locked",
+            "disabled_and_locked"
+          ]
+        },
+        "disabled": {
+          "type": "boolean"
+        },
+        "locked": {
+          "type": "boolean"
+        },
+        "autoLocked": {
+          "type": "boolean"
+        },
+        "lockedByFailedCount": {
+          "type": "boolean"
+        },
+        "failedCount": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "loginCount": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "lockoutThreshold": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "passwordNeverExpires": {
+          "type": "boolean"
+        },
+        "passwordNotRequired": {
+          "type": "boolean"
+        },
+        "normalAccount": {
+          "type": "boolean"
+        },
+        "acbBits": {
+          "type": "integer",
+          "minimum": 0
+        }
+      },
+      "additionalProperties": false
+    }
+  },
+  "additionalProperties": false
+}
